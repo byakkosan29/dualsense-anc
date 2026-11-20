@@ -34,9 +34,9 @@ canvas.spectrum{height:220px}
 </head>
 <body>
 <main>
-  <div class="top"><div><div class="brand">DUALSENSE / ANC LAB</div><div class="sub">ANDROID MIC DIAGNOSTICS · BUILD 02</div></div><div class="sub" id="secureTag">Checking browser…</div></div>
+  <div class="top"><div><div class="brand">DUALSENSE / ANC LAB</div><div class="sub">ANDROID AUDIO & ANC EXPERIMENT · BUILD 03</div></div><div class="sub" id="secureTag">Checking browser…</div></div>
   <h1>Can your microphones hear?</h1>
-  <p>Test the phone microphone and wired / USB headset microphone independently. This page visualizes the live signal; it does not generate anti-noise.</p>
+  <p>Measure microphone input, test wired-headset output at a safely limited level, and inspect browser audio latency. This build does not yet perform active noise cancellation.</p>
 
   <section class="panel">
     <div class="label">01 / Permission & device</div>
@@ -73,17 +73,50 @@ canvas.spectrum{height:220px}
     <div class="legend"><span>20 Hz</span><span>100 Hz</span><span>500 Hz</span><span>2 kHz</span><span>8 kHz</span><span>20 kHz</span></div>
     <div class="small" style="margin-top:10px">Tip: tap or speak near the selected mic, then watch the waveform and spectrum move. A flat line usually means the selected input is silent, blocked, or disconnected.</div>
   </section>
+  <section class="panel" id="outputPanel">
+    <div class="label">05 / Wired headset output test</div>
+    <p class="small" style="margin-top:5px">Connect your 3.5 mm headset before starting. Use a quiet environment and keep the test level low.</p>
+    <div style="margin-top:14px">
+      <div class="row"><span class="small">Test frequency</span><strong id="toneReadout">500 Hz</strong></div>
+      <input id="toneFrequency" type="range" min="100" max="2000" step="50" value="500" style="width:100%;margin-top:10px">
+    </div>
+    <div style="margin-top:14px">
+      <div class="row"><span class="small">Output level (capped)</span><strong id="volumeReadout">2%</strong></div>
+      <input id="outputVolume" type="range" min="0" max="5" step="0.5" value="2" style="width:100%;margin-top:10px">
+    </div>
+    <div class="actions">
+      <button class="primary" id="startToneBtn">PLAY TEST TONE</button>
+      <button class="stop" id="stopToneBtn" disabled>STOP OUTPUT</button>
+    </div>
+    <div class="status"><i class="dot" id="outputDot"></i><span id="outputStatus">Output test stopped.</span></div>
+    <div class="notice">Safety: the output is limited to 5% digital gain. Start at 0–2%. Stop immediately if the tone is uncomfortable. This is a routing test, not anti-noise.</div>
+    <div class="label" style="margin-top:18px">Output route</div>
+    <div class="small" id="outputRoute">Connect the wired headset, then play the test tone quietly. Android may route browser audio automatically; selecting an output device is not supported by every browser.</div>
+  </section>
+
+  <section class="panel">
+    <div class="label">06 / Audio latency diagnostics</div>
+    <div class="statgrid">
+      <div class="stat"><b id="baseLatency">—</b><span>Base latency</span></div>
+      <div class="stat"><b id="outputLatency">—</b><span>Output latency</span></div>
+      <div class="stat"><b id="contextRate">—</b><span>Context rate</span></div>
+    </div>
+    <div class="small" id="latencyNote" style="margin-top:10px">Start microphone input to inspect available Web Audio timing estimates.</div>
+    <div class="notice">These are browser-reported estimates, not a calibrated acoustic round-trip measurement. Real ANC needs much tighter end-to-end timing validation.</div>
+  </section>
+
   <section class="panel">
     <div class="label">04 / Input diagnostics</div>
     <div class="small" id="diagnostic">Waiting for microphone stream…</div>
   </section>
-  <p class="small" style="text-align:center;margin-top:18px">DualSense ANC is an experimental microphone monitor. Real ANC requires calibrated output routing, latency compensation and adaptive acoustic filtering.</p>
+  <p class="small" style="text-align:center;margin-top:18px">DualSense ANC Build 03 is an input diagnostic and low-level output/latency test. It does not implement active noise cancellation. Do not use generated anti-noise on your ears until a validated, low-latency adaptive system is available.</p>
 </main>
 <script>
 (() => {
  const $ = id => document.getElementById(id);
  const enableBtn=$('enableBtn'), stopBtn=$('stopBtn'), select=$('deviceSelect');
  let stream=null, ctx=null, analyser=null, source=null, raf=0, activeDeviceId=null;
+ let outputCtx=null, oscillator=null, outputGain=null;
  const wave=$('wave'), wctx=wave.getContext('2d');
  const spec=$('spectrum'), sctx=spec.getContext('2d');
  const secure=window.isSecureContext;
@@ -105,6 +138,53 @@ canvas.spectrum{height:220px}
    $('levelBar').style.width='0%'; $('freqPeak').textContent='Peak: —';
    status('Microphone stopped.');
    drawIdle();
+ }
+ function stopTone(){
+   if(oscillator){try{oscillator.stop()}catch(e){};try{oscillator.disconnect()}catch(e){}}
+   if(outputGain){try{outputGain.disconnect()}catch(e){}}
+   oscillator=outputGain=null;
+   $('stopToneBtn').disabled=true; $('startToneBtn').disabled=false;
+   $('outputDot').className='dot';
+   $('outputStatus').textContent='Output test stopped.';
+ }
+ async function playTone(){
+   stopTone();
+   try{
+     const AudioCtx=window.AudioContext||window.webkitAudioContext;
+     if(!AudioCtx) throw new Error('Web Audio API is unavailable in this browser.');
+     if(!outputCtx||outputCtx.state==='closed') outputCtx=new AudioCtx();
+     await outputCtx.resume();
+     oscillator=outputCtx.createOscillator();
+     outputGain=outputCtx.createGain();
+     oscillator.type='sine';
+     oscillator.frequency.value=Number($('toneFrequency').value);
+     // Hard cap at 0.05 (5% digital amplitude); default is 0.02.
+     outputGain.gain.value=Math.min(.05,Number($('outputVolume').value)/100);
+     oscillator.connect(outputGain);
+     outputGain.connect(outputCtx.destination);
+     oscillator.start();
+     $('startToneBtn').disabled=true; $('stopToneBtn').disabled=false;
+     $('outputDot').className='dot ok';
+     $('outputStatus').textContent='Test tone playing · '+oscillator.frequency.value+' Hz · '+Math.round(outputGain.gain.value*100)+'% digital level.';
+     $('outputRoute').textContent='Audio is being sent to the browser’s current system output. Confirm that Android routes it to the wired headset; this page cannot guarantee or force the route on every device.';
+   }catch(e){
+     stopTone(); $('outputDot').className='dot bad';
+     $('outputStatus').textContent='Could not start output: '+e.message;
+   }
+ }
+ function updateToneControls(){
+   $('toneReadout').textContent=$('toneFrequency').value+' Hz';
+   $('volumeReadout').textContent=$('outputVolume').value+'%';
+   if(oscillator) oscillator.frequency.setTargetAtTime(Number($('toneFrequency').value),outputCtx.currentTime,.015);
+   if(outputGain) outputGain.gain.setTargetAtTime(Math.min(.05,Number($('outputVolume').value)/100),outputCtx.currentTime,.015);
+ }
+ function updateLatency(){
+   if(!ctx){$('latencyNote').textContent='Start microphone input to inspect available Web Audio timing estimates.';return}
+   $('baseLatency').textContent=Number.isFinite(ctx.baseLatency)?(ctx.baseLatency*1000).toFixed(1)+' ms':'N/A';
+   $('outputLatency').textContent=Number.isFinite(ctx.outputLatency)?(ctx.outputLatency*1000).toFixed(1)+' ms':'N/A';
+   $('contextRate').textContent=ctx.sampleRate+' Hz';
+   const track=stream?.getAudioTracks()[0], inputLatency=track?.getSettings?.().latency;
+   $('latencyNote').textContent='Browser estimates only. '+(Number.isFinite(inputLatency)?'Input track latency: '+(inputLatency*1000).toFixed(1)+' ms. ':'Input track latency is not exposed. ')+'A physical loopback test is required to measure true end-to-end latency.';
  }
  function drawIdle(){
    [ [wctx,wave,'WAVEFORM'],[sctx,spec,'FREQUENCY SPECTRUM'] ].forEach(([c,el,label])=>{
@@ -227,6 +307,10 @@ canvas.spectrum{height:220px}
  stopBtn.addEventListener('click',stop);
  $('refreshBtn').addEventListener('click',listDevices);
  select.addEventListener('change',()=>{if(stream)start(select.value)});
+ $('startToneBtn').addEventListener('click',playTone);
+ $('stopToneBtn').addEventListener('click',stopTone);
+ $('toneFrequency').addEventListener('input',updateToneControls);
+ $('outputVolume').addEventListener('input',updateToneControls);
  navigator.mediaDevices?.addEventListener?.('devicechange',listDevices);
  drawIdle();
 })();

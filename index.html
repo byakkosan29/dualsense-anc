@@ -34,9 +34,9 @@ canvas.spectrum{height:220px}
 </head>
 <body>
 <main>
-  <div class="top"><div><div class="brand">DUALSENSE / ANC LAB</div><div class="sub">ANDROID AUDIO & ANC EXPERIMENT · BUILD 03</div></div><div class="sub" id="secureTag">Checking browser…</div></div>
+  <div class="top"><div><div class="brand">DUALSENSE / ANC LAB</div><div class="sub">DSP CORE & FxLMS SIMULATOR · BUILD 04</div></div><div class="sub" id="secureTag">Checking browser…</div></div>
   <h1>Can your microphones hear?</h1>
-  <p>Measure microphone input, test wired-headset output at a safely limited level, and inspect browser audio latency. This build does not yet perform active noise cancellation.</p>
+  <p>Explore an isolated FxLMS adaptive-filter simulation. The DSP output is monitored internally only and is never routed to your headset.</p>
 
   <section class="panel">
     <div class="label">01 / Permission & device</div>
@@ -105,11 +105,41 @@ canvas.spectrum{height:220px}
     <div class="notice">These are browser-reported estimates, not a calibrated acoustic round-trip measurement. Real ANC needs much tighter end-to-end timing validation.</div>
   </section>
 
+  <section class="panel" id="dspPanel">
+    <div class="label">07 / DSP CORE · FxLMS SIMULATION</div>
+    <p class="small" style="margin-top:6px">Synthetic reference noise → adaptive FIR filter → simulated secondary path → residual error. This is a software simulation, not live acoustic ANC.</p>
+    <div class="statgrid" style="margin-top:14px">
+      <div class="stat"><b id="dspBefore">—</b><span>REFERENCE RMS</span></div>
+      <div class="stat"><b id="dspAfter">—</b><span>SIMULATED RESIDUAL</span></div>
+      <div class="stat"><b id="dspReduction">—</b><span>SIMULATED REDUCTION</span></div>
+    </div>
+    <div style="margin-top:15px">
+      <div class="row"><span class="small">Adaptive step size (μ)</span><strong id="muReadout">0.00008</strong></div>
+      <input id="dspMu" type="range" min="1" max="20" step="1" value="8" style="width:100%;margin-top:8px">
+    </div>
+    <div style="margin-top:12px">
+      <div class="row"><span class="small">Filter length</span><strong id="tapsReadout">32 taps</strong></div>
+      <select id="dspTaps" style="width:100%;margin-top:8px">
+        <option value="16">16 taps</option><option value="32" selected>32 taps</option><option value="64">64 taps</option>
+      </select>
+    </div>
+    <div class="actions" style="margin-top:15px">
+      <button class="primary" id="dspStart">RUN SIMULATION</button>
+      <button class="stop" id="dspStop" disabled>STOP DSP</button>
+      <button id="dspReset">RESET FILTER</button>
+    </div>
+    <div class="status"><i class="dot" id="dspDot"></i><span id="dspStatus">DSP idle. No audio output is connected.</span></div>
+    <canvas id="dspPlot" width="900" height="220" style="width:100%;height:auto;display:block;background:#08111b;border:1px solid #26384b;border-radius:12px;margin-top:14px"></canvas>
+    <div class="row small" style="margin-top:8px"><span>Reference / error level</span><span>Simulation time: <b id="dspTime">0.0 s</b></span></div>
+    <div class="notice" style="margin-top:13px">SIMULATION SAFETY: FxLMS runs on generated test data only. The adaptive output is not connected to AudioContext.destination, the headset, or the microphone monitor. The reduction number is synthetic and must not be interpreted as real-world ANC performance.</div>
+    <div class="small" style="margin-top:12px"><b>Current model:</b> single-channel broadband + low-frequency synthetic noise, a fixed simulated secondary path, normalized FxLMS update, and residual-error monitoring. It does not estimate your headset's real acoustic path.</div>
+  </section>
+
   <section class="panel">
     <div class="label">04 / Input diagnostics</div>
     <div class="small" id="diagnostic">Waiting for microphone stream…</div>
   </section>
-  <p class="small" style="text-align:center;margin-top:18px">DualSense ANC Build 03 is an input diagnostic and low-level output/latency test. It does not implement active noise cancellation. Do not use generated anti-noise on your ears until a validated, low-latency adaptive system is available.</p>
+  <p class="small" style="text-align:center;margin-top:18px">DualSense ANC Build 04 includes microphone diagnostics, a low-level output routing test, and an isolated synthetic FxLMS DSP simulation. No adaptive anti-noise is routed to the headset. Real ANC requires validated microphones, acoustic secondary-path calibration, and low-latency native audio processing.</p>
 </main>
 <script>
 (() => {
@@ -117,6 +147,7 @@ canvas.spectrum{height:220px}
  const enableBtn=$('enableBtn'), stopBtn=$('stopBtn'), select=$('deviceSelect');
  let stream=null, ctx=null, analyser=null, source=null, raf=0, activeDeviceId=null;
  let outputCtx=null, oscillator=null, outputGain=null;
+ let dspTimer=null, dspState=null, dspSamples=0, dspStartAt=0;
  const wave=$('wave'), wctx=wave.getContext('2d');
  const spec=$('spectrum'), sctx=spec.getContext('2d');
  const secure=window.isSecureContext;
@@ -186,6 +217,91 @@ canvas.spectrum{height:220px}
    const track=stream?.getAudioTracks()[0], inputLatency=track?.getSettings?.().latency;
    $('latencyNote').textContent='Browser estimates only. '+(Number.isFinite(inputLatency)?'Input track latency: '+(inputLatency*1000).toFixed(1)+' ms. ':'Input track latency is not exposed. ')+'A physical loopback test is required to measure true end-to-end latency.';
  }
+
+ // FxLMS simulator: synthetic signals only. Never connects to audio output.
+ const dspCanvas=$('dspPlot'), dspCtx=dspCanvas.getContext('2d');
+ function makeRng(seed){let x=seed>>>0;return ()=>{x=(1664525*x+1013904223)>>>0;return x/4294967296*2-1}}
+ function resetDSP(){
+   stopDSP();
+   const taps=Number($('dspTaps').value);
+   dspState={w:new Float64Array(taps), x:new Float64Array(taps), xf:new Float64Array(taps),
+     sec:new Float64Array([0.72,0.20,-0.11,0.07]), secHist:new Float64Array(4),
+     refRms:0, errRms:0, history:[], rng:makeRng(20261120), phase:0, time:0};
+   $('dspBefore').textContent='—';$('dspAfter').textContent='—';$('dspReduction').textContent='—';
+   $('dspTime').textContent='0.0 s'; $('dspStatus').textContent='Filter reset. Ready for synthetic simulation.';
+   $('dspDot').className='dot'; drawDSPPlot();
+ }
+ function stopDSP(){
+   if(dspTimer){clearInterval(dspTimer);dspTimer=null}
+   $('dspStart').disabled=false;$('dspStop').disabled=true;
+ }
+ function drawDSPPlot(){
+   const W=dspCanvas.width,H=dspCanvas.height;
+   dspCtx.clearRect(0,0,W,H);dspCtx.fillStyle='#08111b';dspCtx.fillRect(0,0,W,H);
+   dspCtx.strokeStyle='#203348';dspCtx.lineWidth=1;
+   for(let i=1;i<4;i++){let y=i*H/4;dspCtx.beginPath();dspCtx.moveTo(0,y);dspCtx.lineTo(W,y);dspCtx.stroke()}
+   if(!dspState||dspState.history.length<2){dspCtx.fillStyle='#8194ad';dspCtx.font='18px system-ui';dspCtx.fillText('FxLMS convergence will appear here',20,32);return}
+   const a=dspState.history, max=Math.max(.02,...a.map(v=>v[0]),...a.map(v=>v[1]));
+   const drawLine=(idx,color)=>{dspCtx.strokeStyle=color;dspCtx.lineWidth=2;dspCtx.beginPath();a.forEach((v,i)=>{let x=i/(a.length-1)*W,y=H-12-(v[idx]/max)*(H-24);if(i===0)dspCtx.moveTo(x,y);else dspCtx.lineTo(x,y)});dspCtx.stroke()};
+   drawLine(0,'#56d9ff');drawLine(1,'#ffbd69');
+ }
+ function dspBlock(){
+   if(!dspState)return;
+   const d=dspState, mu=Number($('dspMu').value)*0.00001, block=256;
+   let refEnergy=0,errEnergy=0;
+   for(let n=0;n<block;n++){
+     const white=d.rng();
+     d.phase+=2*Math.PI*110/48000;
+     const reference=0.68*white+0.32*Math.sin(d.phase);
+     // Desired disturbance: reference passing through a synthetic primary path.
+     const primary=0.65*reference+0.22*(d.x[0]||0)-0.08*(d.x[1]||0);
+     for(let i=d.x.length-1;i>0;i--)d.x[i]=d.x[i-1];
+     d.x[0]=reference;
+     // Secondary path model filters the controller output for FxLMS adaptation.
+     let filtered=0;
+     for(let i=0;i<d.sec.length;i++)filtered+=d.sec[i]*d.xf[i];
+     for(let i=d.xf.length-1;i>0;i--)d.xf[i]=d.xf[i-1];
+     d.xf[0]=reference;
+     let y=0;
+     for(let i=0;i<d.w.length;i++)y+=d.w[i]*d.x[i];
+     // Simulated speaker/ear path; anti-noise is represented numerically only.
+     for(let i=d.secHist.length-1;i>0;i--)d.secHist[i]=d.secHist[i-1];
+     d.secHist[0]=y;
+     let anti=0;for(let i=0;i<d.sec.length;i++)anti+=d.sec[i]*d.secHist[i];
+     const error=primary-anti;
+     // Filtered-x LMS update with normalized step size and bounded coefficients.
+     const norm=d.xf.reduce((sum,v)=>sum+v*v,1e-5);
+     const step=mu/norm;
+     for(let i=0;i<d.w.length;i++){
+       const fx=d.xf[i]||0;
+       d.w[i]+=step*error*fx;
+       d.w[i]=Math.max(-2,Math.min(2,d.w[i]));
+     }
+     refEnergy+=reference*reference;errEnergy+=error*error;
+   }
+   const rr=Math.sqrt(refEnergy/block), er=Math.sqrt(errEnergy/block);
+   d.refRms=rr;d.errRms=er;d.time+=block/48000;
+   const reduction=20*Math.log10(Math.max(rr,1e-8)/Math.max(er,1e-8));
+   d.history.push([rr,er]);if(d.history.length>180)d.history.shift();
+   $('dspBefore').textContent=rr.toFixed(3);
+   $('dspAfter').textContent=er.toFixed(3);
+   $('dspReduction').textContent=reduction.toFixed(1)+' dB';
+   $('dspTime').textContent=d.time.toFixed(1)+' s';
+   $('dspStatus').textContent='Running synthetic FxLMS · '+d.w.length+' taps · numerical output only.';
+   $('dspDot').className='dot ok';drawDSPPlot();
+ }
+ function startDSP(){
+   if(!dspState)resetDSP();
+   stopDSP();$('dspStart').disabled=true;$('dspStop').disabled=false;
+   $('dspStatus').textContent='Starting synthetic FxLMS simulation…';
+   dspStartAt=performance.now();
+   dspTimer=setInterval(dspBlock,Math.max(20,Math.round(256/48000*1000)));
+ }
+ $('dspStart').addEventListener('click',startDSP);
+ $('dspStop').addEventListener('click',()=>{stopDSP();$('dspDot').className='dot';$('dspStatus').textContent='Simulation paused. No audio output was generated.'});
+ $('dspReset').addEventListener('click',resetDSP);
+ $('dspMu').addEventListener('input',()=>{$('muReadout').textContent=(Number($('dspMu').value)*0.00001).toFixed(5)});
+ $('dspTaps').addEventListener('change',()=>{$('tapsReadout').textContent=$('dspTaps').value+' taps';resetDSP()});
  function drawIdle(){
    [ [wctx,wave,'WAVEFORM'],[sctx,spec,'FREQUENCY SPECTRUM'] ].forEach(([c,el,label])=>{
      c.clearRect(0,0,el.width,el.height); c.fillStyle='#08111b'; c.fillRect(0,0,el.width,el.height);

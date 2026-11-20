@@ -49,7 +49,7 @@ canvas.spectrum{height:220px}
     <div class="error" id="errorBox"></div>
     <div style="margin-top:17px">
       <div class="label">Active input device</div>
-      <select id="deviceSelect" disabled><option>Grant microphone permission first</option></select>
+      <select id="deviceSelect" disabled><option value="">Grant microphone permission first</option></select>
       <div class="small" style="margin-top:7px">After permission is granted, Chrome should reveal device labels here. Select a different input to test it.</div>
     </div>
     <div class="actions"><button id="refreshBtn">REFRESH DEVICE LIST</button></div>
@@ -135,11 +135,21 @@ canvas.spectrum{height:220px}
    }
    enableBtn.disabled=true; status('Requesting microphone permission…');
    try{
-     const constraints={audio:{
-       ...(deviceId?{deviceId:{exact:deviceId}}:{}),
-       echoCancellation:false,noiseSuppression:false,autoGainControl:false
-     },video:false};
-     const newStream=await navigator.mediaDevices.getUserMedia(constraints);
+     // On first use, request the default microphone so Chrome can show
+     // its permission prompt. Avoid strict device IDs and unsupported audio
+     // processing constraints on Android, which can cause OverconstrainedError.
+     let newStream;
+     if(deviceId) {
+       try {
+         newStream=await navigator.mediaDevices.getUserMedia({
+           audio:{deviceId:{ideal:deviceId}}, video:false
+         });
+       } catch(selectedError) {
+         newStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+       }
+     } else {
+       newStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+     }
      if(stream) stream.getTracks().forEach(t=>t.stop());
      if(ctx && ctx.state!=='closed') await ctx.close();
      stream=newStream; activeDeviceId=stream.getAudioTracks()[0]?.getSettings().deviceId||deviceId||null;
@@ -212,7 +222,8 @@ canvas.spectrum{height:220px}
    }
    $('freqPeak').textContent=peakVal>3?'Peak: '+(peakHz>=1000?(peakHz/1000).toFixed(2)+' kHz':Math.round(peakHz)+' Hz'):'Peak: —';
  }
- enableBtn.addEventListener('click',()=>start(select.value||null));
+ // Do not pass the disabled placeholder text as if it were a real deviceId.
+ enableBtn.addEventListener('click',()=>start(select.disabled ? null : (select.value||null)));
  stopBtn.addEventListener('click',stop);
  $('refreshBtn').addEventListener('click',listDevices);
  select.addEventListener('change',()=>{if(stream)start(select.value)});

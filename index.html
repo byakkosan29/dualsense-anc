@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#090d14">
+<title>DualSense ANC — Mic Lab</title>
+<style>
+:root{color-scheme:dark;--bg:#090d14;--panel:#111925;--line:#263448;--muted:#8ea0b8;--text:#edf4ff;--cyan:#56d9ff;--green:#5ee6a8;--red:#ff6b78;--amber:#ffc76a}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% -20%,#1b3550 0,transparent 55%),var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:900px;margin:auto;padding:22px 16px 44px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px}
+.brand{font-size:13px;letter-spacing:.18em;color:var(--cyan);font-weight:800}.sub{color:var(--muted);font-size:12px}
+h1{font-size:clamp(26px,6vw,38px);line-height:1.08;margin:7px 0 8px;letter-spacing:-.04em}
+p{margin:0;color:var(--muted)}.panel{background:linear-gradient(180deg,#141e2b,#101722);border:1px solid var(--line);border-radius:18px;padding:17px;margin:13px 0;box-shadow:0 12px 30px #0003}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.label{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:700}
+button,select{font:inherit;color:var(--text);background:#1b2a3c;border:1px solid #344a64;border-radius:12px;padding:12px 14px}
+button{cursor:pointer;font-weight:750}button.primary{background:linear-gradient(135deg,#1ca9d1,#2674c9);border:0;color:white;min-height:50px;box-shadow:0 8px 24px #168fc344}
+button.stop{background:#3a1e2a;border-color:#713846}button:disabled{opacity:.45;cursor:not-allowed}
+select{width:100%;margin-top:8px;background:#0c1420}
+.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}.actions button{flex:1}
+.status{display:flex;align-items:center;gap:9px;margin-top:12px;color:var(--muted);font-size:13px}
+.dot{width:9px;height:9px;border-radius:50%;background:#65758b;box-shadow:0 0 0 4px #65758b22}.dot.ok{background:var(--green);box-shadow:0 0 0 4px #5ee6a822}.dot.bad{background:var(--red);box-shadow:0 0 0 4px #ff6b7822}
+.meterHead{display:flex;justify-content:space-between;align-items:end;gap:10px}.db{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--green)}
+.bar{height:13px;background:#08111b;border:1px solid #26384b;border-radius:99px;overflow:hidden;margin-top:12px}.bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,#38d89b 0%,#d6e95e 72%,#ff6b78 100%);border-radius:99px;transition:width .06s}
+canvas{display:block;width:100%;height:180px;background:#08111b;border:1px solid #26384b;border-radius:12px;margin-top:12px}
+canvas.spectrum{height:220px}
+.legend{display:flex;justify-content:space-between;color:#73869f;font-size:10px;margin-top:6px}
+.small{font-size:12px;color:var(--muted)}.notice{border-left:3px solid var(--amber);padding:10px 12px;background:#2a2418;border-radius:8px;color:#e9d7b4;font-size:12px;margin-top:12px}
+.error{color:#ff9aa4;white-space:pre-wrap;font-size:12px;margin-top:10px}
+.statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:13px}
+.stat{background:#0b1420;border:1px solid #24364a;border-radius:12px;padding:10px}.stat b{display:block;font-size:17px;font-variant-numeric:tabular-nums}.stat span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+@media(max-width:560px){main{padding:18px 12px 32px}.panel{padding:14px}.statgrid{grid-template-columns:1fr 1fr 1fr}canvas{height:150px}canvas.spectrum{height:190px}}
+</style>
+</head>
+<body>
+<main>
+  <div class="top"><div><div class="brand">DUALSENSE / ANC LAB</div><div class="sub">ANDROID MIC DIAGNOSTICS · BUILD 02</div></div><div class="sub" id="secureTag">Checking browser…</div></div>
+  <h1>Can your microphones hear?</h1>
+  <p>Test the phone microphone and wired / USB headset microphone independently. This page visualizes the live signal; it does not generate anti-noise.</p>
+
+  <section class="panel">
+    <div class="label">01 / Permission & device</div>
+    <div class="actions">
+      <button class="primary" id="enableBtn">ENABLE MICROPHONE</button>
+      <button class="stop" id="stopBtn" disabled>STOP INPUT</button>
+    </div>
+    <div class="status"><i class="dot" id="statusDot"></i><span id="statusText">Microphone permission has not been requested.</span></div>
+    <div class="notice" id="secureNotice" hidden>Chrome may block microphone access when this page is opened as a local file. Open it from an HTTPS website, then tap ENABLE MICROPHONE.</div>
+    <div class="error" id="errorBox"></div>
+    <div style="margin-top:17px">
+      <div class="label">Active input device</div>
+      <select id="deviceSelect" disabled><option>Grant microphone permission first</option></select>
+      <div class="small" style="margin-top:7px">After permission is granted, Chrome should reveal device labels here. Select a different input to test it.</div>
+    </div>
+    <div class="actions"><button id="refreshBtn">REFRESH DEVICE LIST</button></div>
+  </section>
+
+  <section class="panel">
+    <div class="meterHead"><div><div class="label">02 / Live input level</div><div class="small">Overall signal strength · updates continuously</div></div><div class="db" id="dbValue">— dBFS</div></div>
+    <div class="bar"><i id="levelBar"></i></div>
+    <div class="statgrid">
+      <div class="stat"><b id="rmsValue">—</b><span>RMS level</span></div>
+      <div class="stat"><b id="peakValue">—</b><span>Peak level</span></div>
+      <div class="stat"><b id="sampleRate">—</b><span>Sample rate</span></div>
+    </div>
+    <canvas id="wave" width="900" height="260"></canvas>
+    <div class="legend"><span>← Older samples</span><span>Live waveform</span><span>Amplitude →</span></div>
+  </section>
+
+  <section class="panel">
+    <div class="row"><div><div class="label">03 / Frequency spectrum</div><div class="small">Shows which frequencies are present in the microphone signal</div></div><div class="small" id="freqPeak">Peak: —</div></div>
+    <canvas class="spectrum" id="spectrum" width="900" height="300"></canvas>
+    <div class="legend"><span>20 Hz</span><span>100 Hz</span><span>500 Hz</span><span>2 kHz</span><span>8 kHz</span><span>20 kHz</span></div>
+    <div class="small" style="margin-top:10px">Tip: tap or speak near the selected mic, then watch the waveform and spectrum move. A flat line usually means the selected input is silent, blocked, or disconnected.</div>
+  </section>
+  <section class="panel">
+    <div class="label">04 / Input diagnostics</div>
+    <div class="small" id="diagnostic">Waiting for microphone stream…</div>
+  </section>
+  <p class="small" style="text-align:center;margin-top:18px">DualSense ANC is an experimental microphone monitor. Real ANC requires calibrated output routing, latency compensation and adaptive acoustic filtering.</p>
+</main>
+<script>
+(() => {
+ const $ = id => document.getElementById(id);
+ const enableBtn=$('enableBtn'), stopBtn=$('stopBtn'), select=$('deviceSelect');
+ let stream=null, ctx=null, analyser=null, source=null, raf=0, activeDeviceId=null;
+ const wave=$('wave'), wctx=wave.getContext('2d');
+ const spec=$('spectrum'), sctx=spec.getContext('2d');
+ const secure=window.isSecureContext;
+ $('secureTag').textContent=secure?'SECURE CONTEXT':'NOT SECURE';
+ if(!secure) $('secureNotice').hidden=false;
+
+ function status(text,kind=''){
+   $('statusText').textContent=text;
+   $('statusDot').className='dot '+kind;
+ }
+ function error(text){$('errorBox').textContent=text||''}
+ function stop(){
+   cancelAnimationFrame(raf);
+   if(stream) stream.getTracks().forEach(t=>t.stop());
+   if(ctx && ctx.state!=='closed') ctx.close();
+   stream=ctx=analyser=source=null; activeDeviceId=null;
+   stopBtn.disabled=true; enableBtn.disabled=false; select.disabled=true;
+   $('dbValue').textContent='— dBFS'; $('rmsValue').textContent='—'; $('peakValue').textContent='—'; $('sampleRate').textContent='—';
+   $('levelBar').style.width='0%'; $('freqPeak').textContent='Peak: —';
+   status('Microphone stopped.');
+   drawIdle();
+ }
+ function drawIdle(){
+   [ [wctx,wave,'WAVEFORM'],[sctx,spec,'FREQUENCY SPECTRUM'] ].forEach(([c,el,label])=>{
+     c.clearRect(0,0,el.width,el.height); c.fillStyle='#08111b'; c.fillRect(0,0,el.width,el.height);
+     c.strokeStyle='#26384b';c.lineWidth=1;c.beginPath();c.moveTo(0,el.height/2);c.lineTo(el.width,el.height/2);c.stroke();
+     c.fillStyle='#657991';c.font='15px system-ui';c.fillText('Waiting for microphone input',18,28);
+   });
+ }
+ async function listDevices(){
+   if(!navigator.mediaDevices?.enumerateDevices){status('This browser does not support media device enumeration.','bad');return}
+   try{
+     const devices=await navigator.mediaDevices.enumerateDevices();
+     const inputs=devices.filter(d=>d.kind==='audioinput');
+     const previous=select.value;
+     select.innerHTML='';
+     if(!inputs.length){select.add(new Option('No audio inputs exposed by Chrome',''));select.disabled=true;return}
+     inputs.forEach((d,i)=>select.add(new Option(d.label||`Microphone ${i+1} (label hidden)`,d.deviceId)));
+     select.disabled=!stream;
+     if(previous && inputs.some(d=>d.deviceId===previous)) select.value=previous;
+     else if(activeDeviceId && inputs.some(d=>d.deviceId===activeDeviceId)) select.value=activeDeviceId;
+   }catch(e){error('Device list error: '+e.message)}
+ }
+ async function start(deviceId){
+   error('');
+   if(!navigator.mediaDevices?.getUserMedia){
+     status('getUserMedia is unavailable. Open this page in Chrome over HTTPS.','bad');
+     error('Microphone API unavailable. A local file URL may not be treated as a secure context.');return;
+   }
+   enableBtn.disabled=true; status('Requesting microphone permission…');
+   try{
+     const constraints={audio:{
+       ...(deviceId?{deviceId:{exact:deviceId}}:{}),
+       echoCancellation:false,noiseSuppression:false,autoGainControl:false
+     },video:false};
+     const newStream=await navigator.mediaDevices.getUserMedia(constraints);
+     if(stream) stream.getTracks().forEach(t=>t.stop());
+     if(ctx && ctx.state!=='closed') await ctx.close();
+     stream=newStream; activeDeviceId=stream.getAudioTracks()[0]?.getSettings().deviceId||deviceId||null;
+     ctx=new (window.AudioContext||window.webkitAudioContext)();
+     await ctx.resume();
+     source=ctx.createMediaStreamSource(stream);
+     analyser=ctx.createAnalyser(); analyser.fftSize=4096; analyser.smoothingTimeConstant=.72;
+     source.connect(analyser);
+     const track=stream.getAudioTracks()[0], settings=track.getSettings();
+     status('MICROPHONE ACTIVE — '+(track.label||'Input connected'),'ok');
+     stopBtn.disabled=false; select.disabled=false;
+     $('sampleRate').textContent=(settings.sampleRate||ctx.sampleRate)+' Hz';
+     $('diagnostic').textContent=`Track: ${track.label||'unnamed input'} · Sample rate: ${settings.sampleRate||ctx.sampleRate} Hz · Channels: ${settings.channelCount||'unknown'} · Echo cancellation: ${settings.echoCancellation===false?'off':'browser default'} · Noise suppression: ${settings.noiseSuppression===false?'off':'browser default'}`;
+     await listDevices();
+     if(activeDeviceId) select.value=activeDeviceId;
+     draw();
+   }catch(e){
+     enableBtn.disabled=false;
+     status('Could not start microphone.','bad');
+     const hints={
+       NotAllowedError:'Permission denied. In Chrome, open Site settings → Microphone → Allow, then reload this page.',
+       NotFoundError:'No microphone input was found. Connect the headset and try again.',
+       NotReadableError:'The microphone is busy or Android could not open it. Close other apps using the mic and retry.',
+       OverconstrainedError:'The selected microphone is unavailable. Refresh the device list and choose another input.',
+       SecurityError:'Chrome blocked microphone access. Use an HTTPS page, not a local file preview.'
+     };
+     error((hints[e.name]||e.message||'Unknown microphone error')+'\\nError: '+e.name);
+   }
+ }
+ function draw(){
+   if(!analyser||!ctx)return;
+   const n=analyser.fftSize, samples=new Uint8Array(n), bins=new Uint8Array(analyser.frequencyBinCount);
+   analyser.getByteTimeDomainData(samples); analyser.getByteFrequencyData(bins);
+   let sum=0,peak=0;
+   for(let i=0;i<n;i++){const v=(samples[i]-128)/128;sum+=v*v;peak=Math.max(peak,Math.abs(v))}
+   const rms=Math.sqrt(sum/n), db=20*Math.log10(Math.max(rms,1e-7));
+   $('dbValue').textContent=(db<-99?'-∞':db.toFixed(1))+' dBFS';
+   $('rmsValue').textContent=rms.toFixed(4);
+   $('peakValue').textContent=peak.toFixed(3);
+   $('levelBar').style.width=Math.max(0,Math.min(100,(db+60)/60*100))+'%';
+   drawWave(samples);
+   drawSpectrum(bins);
+   raf=requestAnimationFrame(draw);
+ }
+ function drawWave(data){
+   const W=wave.width,H=wave.height;wctx.clearRect(0,0,W,H);wctx.fillStyle='#08111b';wctx.fillRect(0,0,W,H);
+   wctx.strokeStyle='#203348';wctx.lineWidth=1;
+   for(let y=0;y<=4;y++){let yy=y*H/4;wctx.beginPath();wctx.moveTo(0,yy);wctx.lineTo(W,yy);wctx.stroke()}
+   wctx.strokeStyle='#56d9ff';wctx.lineWidth=2;wctx.beginPath();
+   const step=Math.max(1,Math.floor(data.length/W));
+   for(let x=0;x<W;x++){const v=(data[x*step]-128)/128;const y=H/2+v*H*.43;if(x===0)wctx.moveTo(x,y);else wctx.lineTo(x,y)}
+   wctx.stroke();
+ }
+ function drawSpectrum(data){
+   const W=spec.width,H=spec.height; sctx.clearRect(0,0,W,H);sctx.fillStyle='#08111b';sctx.fillRect(0,0,W,H);
+   sctx.strokeStyle='#203348';sctx.lineWidth=1;
+   for(let y=0;y<5;y++){let yy=y*H/4;sctx.beginPath();sctx.moveTo(0,yy);sctx.lineTo(W,yy);sctx.stroke()}
+   const nyquist=ctx.sampleRate/2, minF=20, maxF=Math.min(20000,nyquist), binsN=data.length;
+   const xFor=f=>Math.log(f/minF)/Math.log(maxF/minF)*W;
+   let peakVal=0,peakHz=0;
+   const bars=160;
+   for(let i=0;i<bars;i++){
+     const f1=minF*Math.pow(maxF/minF,i/bars),f2=minF*Math.pow(maxF/minF,(i+1)/bars);
+     const b1=Math.max(1,Math.floor(f1/nyquist*binsN)),b2=Math.max(b1+1,Math.floor(f2/nyquist*binsN));
+     let val=0,idx=b1;for(let b=b1;b<Math.min(b2,binsN);b++){if(data[b]>val){val=data[b];idx=b}}
+     if(val>peakVal){peakVal=val;peakHz=idx*nyquist/binsN}
+     const x=i*W/bars,bw=Math.max(1,W/bars-1),height=val/255*(H-18);
+     sctx.fillStyle=`hsl(${190-(val/255)*120},85%,${45+(val/255)*15}%)`;
+     sctx.fillRect(x,H-height,bw,height);
+   }
+   $('freqPeak').textContent=peakVal>3?'Peak: '+(peakHz>=1000?(peakHz/1000).toFixed(2)+' kHz':Math.round(peakHz)+' Hz'):'Peak: —';
+ }
+ enableBtn.addEventListener('click',()=>start(select.value||null));
+ stopBtn.addEventListener('click',stop);
+ $('refreshBtn').addEventListener('click',listDevices);
+ select.addEventListener('change',()=>{if(stream)start(select.value)});
+ navigator.mediaDevices?.addEventListener?.('devicechange',listDevices);
+ drawIdle();
+})();
+</script>
+</body>
+</html>
